@@ -1,0 +1,319 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================
+// EPIC-C: Admin Users & Authentication
+// ============================================================
+
+model AdminUser {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  password  String
+  name      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  auditLogs AuditLog[]
+
+  @@map("admin_users")
+}
+
+// ============================================================
+// EPIC-B: Audit Logs
+// ============================================================
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String
+  action    String // "create", "update", "delete", "publish", "unpublish", etc.
+  entity    String // "donation_campaign", "source", "article", "template", "prompt", etc.
+  entityId  String
+  changes   Json? // JSON object with before/after values
+  createdAt DateTime @default(now())
+
+  user AdminUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([entity, entityId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+// ============================================================
+// EPIC-D: Donation Campaigns & KGI
+// ============================================================
+
+enum DonationFetchMethod {
+  PUBLIC_TOTAL_SCRAPE // 方式A: ページ上の公開合計をスクレイプ
+  API // 方式B: API経由で取得（将来）
+}
+
+model DonationCampaign {
+  id          String               @id @default(cuid())
+  name        String
+  description String?
+  category    String // "refugee", "children", "food", "medical", "general", etc.
+  provider    String // "UNHCR", "UNICEF", etc.
+
+  // KGI取得設定（必須）
+  fetchMethod DonationFetchMethod
+  publicTotalUrl String // 合計金額が表示されるページURL（方式A必須）
+  apiUrl         String? // API URL（方式B用）
+
+  // Parse Config (JSON) - 管理画面で編集可能
+  // Example: { "selector": ".total-amount", "regex": "\\$([\\d,]+)", "currency": "USD" }
+  parseConfig Json
+
+  // External Link
+  donationUrl String // 実際の寄付ページURL
+
+  // Status
+  isActive   Boolean  @default(true)
+  lastFetchAt DateTime?
+  lastError  String?
+  errorCount Int      @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  snapshots   DonationSnapshot[]
+  clickEvents ClickEvent[]
+
+  @@index([isActive])
+  @@index([lastFetchAt])
+  @@map("donation_campaigns")
+}
+
+model DonationSnapshot {
+  id         String   @id @default(cuid())
+  campaignId String
+  amount     Decimal  @db.Decimal(15, 2) // 寄付金額（正規化済み）
+  currency   String   @default("USD")
+  fetchedAt  DateTime @default(now())
+  rawValue   String? // パース前の生データ（デバッグ用）
+
+  campaign DonationCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@index([campaignId, fetchedAt])
+  @@index([fetchedAt])
+  @@map("donation_snapshots")
+}
+
+model ClickEvent {
+  id         String   @id @default(cuid())
+  campaignId String
+  clickedAt  DateTime @default(now())
+  userAgent  String?
+  referer    String?
+
+  campaign DonationCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@index([campaignId])
+  @@index([clickedAt])
+  @@map("click_events")
+}
+
+// ============================================================
+// EPIC-E: Information Sources (Whitelist)
+// ============================================================
+
+model Source {
+  id          String   @id @default(cuid())
+  name        String
+  url         String   @unique
+  category    String // "humanitarian", "un", "ngo", etc.
+  fetchMethod String   @default("rss") // "rss", "scrape"
+  isActive    Boolean  @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  rawItems RawItem[]
+
+  @@index([isActive])
+  @@map("sources")
+}
+
+model RawItem {
+  id          String   @id @default(cuid())
+  sourceId    String
+  url         String   @unique
+  title       String?
+  content     String?  @db.Text
+  publishedAt DateTime?
+  fetchedAt   DateTime @default(now())
+
+  source Source @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+
+  @@index([sourceId])
+  @@index([publishedAt])
+  @@map("raw_items")
+}
+
+// ============================================================
+// EPIC-F: Templates & Prompts (Prompt as Code)
+// ============================================================
+
+model TemplateVersion {
+  id        String   @id @default(cuid())
+  name      String // "daily_v1", "daily_v2", etc.
+  content   Json // JSON定義（sections配列）
+  isActive  Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isActive])
+  @@map("template_versions")
+}
+
+enum PromptType {
+  SUMMARIZE
+  DRAFT
+  CLASSIFY
+  REVIEW
+  REWRITE
+}
+
+model PromptVersion {
+  id        String     @id @default(cuid())
+  type      PromptType
+  name      String // "review_v1", "rewrite_v2", etc.
+  content   String     @db.Text
+  isActive  Boolean    @default(false)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  @@index([type, isActive])
+  @@map("prompt_versions")
+}
+
+// ============================================================
+// EPIC-G: Articles & Review
+// ============================================================
+
+enum ArticleStatus {
+  DRAFT
+  REVIEWING
+  HOLD
+  PUBLISHED
+}
+
+enum BlockType {
+  FACT
+  INFERENCE
+  UNVERIFIED
+}
+
+model Article {
+  id               String        @id @default(cuid())
+  status           ArticleStatus @default(DRAFT)
+  publishedAt      DateTime?
+
+  // Article Content
+  title            String
+  summary          String?       @db.Text
+
+  // Version tracking
+  templateVersionId String?
+  promptVersionId   String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  blocks     ArticleBlock[]
+  reviewRuns ReviewRun[]
+
+  @@index([status])
+  @@index([publishedAt])
+  @@map("articles")
+}
+
+model ArticleBlock {
+  id         String    @id @default(cuid())
+  articleId  String
+  type       BlockType
+  content    String    @db.Text
+  sources    Json? // Array of source URLs
+  order      Int       @default(0)
+
+  createdAt DateTime @default(now())
+
+  article Article @relation(fields: [articleId], references: [id], onDelete: Cascade)
+
+  @@index([articleId, order])
+  @@map("article_blocks")
+}
+
+model ReviewRun {
+  id        String   @id @default(cuid())
+  articleId String
+
+  // Review Result
+  passed    Boolean
+  score     Json // { evidence: 8, neutrality: 9, overclaim: 7, dignity: 10, scope: 9 }
+  feedback  String?  @db.Text
+
+  // Auto-fix tracking
+  attemptNumber Int @default(1) // 1, 2, or 3
+
+  createdAt DateTime @default(now())
+
+  article Article @relation(fields: [articleId], references: [id], onDelete: Cascade)
+
+  @@index([articleId])
+  @@index([createdAt])
+  @@map("review_runs")
+}
+
+// ============================================================
+// EPIC-H: YouTube Cards (Japanese only)
+// ============================================================
+
+model YouTubeCard {
+  id           String   @id @default(cuid())
+  thumbnailUrl String
+  title        String
+  channelName  String
+  description  String   @db.Text
+  reasons      Json // Array of strings
+  disclaimer   String   @db.Text
+  videoUrl     String
+  isActive     Boolean  @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isActive])
+  @@map("youtube_cards")
+}
+
+// ============================================================
+// EPIC-I: History Entries
+// ============================================================
+
+model HistoryEntry {
+  id          String   @id @default(cuid())
+  year        Int
+  event       String
+  description String   @db.Text
+  sourceUrl   String?
+  order       Int      @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([year, order])
+  @@map("history_entries")
+}
