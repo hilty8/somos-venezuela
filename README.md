@@ -102,6 +102,14 @@ pnpm db:studio
 pnpm worker:fetch-donations
 ```
 
+### 情報ソース取得（RSS/Scrape）
+
+```bash
+pnpm worker:fetch-sources
+```
+
+このWorkerは、登録された情報ソース（ホワイトリスト）からRSS/スクレイプで記事を収集し、`raw_items` テーブルに保存します。URL重複は自動的に排除されます。
+
 ### 日次記事生成パイプライン
 
 ```bash
@@ -127,8 +135,9 @@ pnpm worker:daily-pipeline
 │   │   └── utils/        # ユーティリティ
 │   └── components/        # Reactコンポーネント
 ├── workers/               # バッチジョブスクリプト
-│   ├── fetch-donations.ts
-│   └── daily-pipeline.ts
+│   ├── fetch-donations.ts  # KGI取得
+│   ├── fetch-sources.ts    # 情報ソース取得（RSS/Scrape）
+│   └── daily-pipeline.ts   # 日次記事生成
 └── public/                # 静的ファイル
 ```
 
@@ -156,6 +165,9 @@ Railway での構成は以下の通りです：
    - **日次KGI取得**
      - Schedule: `0 */6 * * *` (6時間ごと)
      - Command: `pnpm install && pnpm prisma generate && pnpm worker:fetch-donations`
+   - **情報ソース取得** (M1)
+     - Schedule: `0 */12 * * *` (12時間ごと)
+     - Command: `pnpm install && pnpm prisma generate && pnpm worker:fetch-sources`
    - **日次記事生成** (M1実装後)
      - Schedule: `0 9 * * *` (毎日9:00 UTC)
      - Command: `pnpm install && pnpm prisma generate && pnpm worker:daily-pipeline`
@@ -241,19 +253,30 @@ Railway ダッシュボードで:
      ```
    - 寄付URL: 実際の寄付ページURL
 
-#### 3. 手動チェック実行
+#### 3. 情報ソース登録（M1以降）
+
+1. `/admin/sources` で「新規ソース」をクリック
+2. 以下を入力:
+   - 名前: 例 "UNHCR Venezuela News"
+   - URL: RSS FeedまたはウェブページのURL
+   - カテゴリ: "humanitarian" / "un" / "ngo" など
+   - 取得方式: "rss" (推奨) または "scrape"
+   - 有効: チェック
+
+#### 4. 手動チェック実行
 
 1. キャンペーン一覧で「テスト」ボタンをクリック
 2. 成功すれば金額が取得され、スナップショットが保存される
 3. 失敗した場合はエラーメッセージを確認し、Parse Configを調整
 
-#### 4. Cron実行確認
+#### 5. Cron実行確認
 
 1. Railway ダッシュボードで Cron Job のログを確認
 2. 正常に実行されていることを確認
 3. `/admin/dashboard` でKGIが更新されていることを確認
+4. （M1以降）情報ソース取得Cronが動作していることを確認
 
-#### 5. Public Homeで確認
+#### 6. Public Homeで確認
 
 1. `https://your-app.up.railway.app/` にアクセス
 2. KGI（累計寄付金額）が表示されていることを確認

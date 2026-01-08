@@ -61,6 +61,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - EPIC-D: Admin campaign management UI with test button and error display
 - M0 補完: /go/{campaign_id} redirect route with click event tracking (user_agent, referer)
 - M0 補完: Unit tests for donation amount parsing and KGI calculation (Vitest)
+- EPIC-E: Sources CRUD API (/api/admin/sources) with audit logging for information source management
+- EPIC-E: Admin UI for Sources management (whitelist) with create/update/delete functionality
+- EPIC-E: RSS Fetcher worker (workers/fetch-sources.ts) with automatic URL deduplication and ethical scraping
+- EPIC-E: Unit tests for RSS parsing, URL normalization, and deduplication logic
 
 ### Changed
 - Admin initial password changed from固定 'admin123' to randomly generated 20-character password (shown once at seed time)
@@ -73,6 +77,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - README: Added Railway deployment procedures with Web/PostgreSQL/Cron configuration
 - README: Added production verification workflow (campaign registration → check → cron → Home display)
 - README: Added admin password generation explanation and usage instructions
+- README: Added Sources management and RSS worker documentation with cron configuration
 - .env.example: Added ADMIN_INITIAL_PASSWORD option for custom initial password
 
 ### Security

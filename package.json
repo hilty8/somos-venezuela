@@ -15,6 +15,7 @@
     "db:seed": "tsx prisma/seed.ts",
     "db:studio": "prisma studio",
     "worker:fetch-donations": "tsx workers/fetch-donations.ts",
+    "worker:fetch-sources": "tsx workers/fetch-sources.ts",
     "worker:daily-pipeline": "tsx workers/daily-pipeline.ts"
   },
   "dependencies": {
@@ -26,6 +27,7 @@
     "next-auth": "^5.0.0-beta.25",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "rss-parser": "^3.13.0",
     "zod": "^3.24.1"
   },
   "devDependencies": {
