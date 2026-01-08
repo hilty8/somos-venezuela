@@ -149,15 +149,19 @@ git push
 
 #### 2. DBへの同期
 
-```bash
-# プロンプトを同期
-pnpm prompts:sync
+**推奨: ローカルまたはCIで実行**
 
-# テンプレートを同期
+```bash
+# ローカル環境で同期（推奨）
+pnpm prompts:sync
 pnpm templates:sync
 ```
 
-または、Admin UI (`/admin/prompts`, `/admin/templates`) の「同期」ボタンから実行。
+**開発環境のみ**: Admin UI (`/admin/prompts`, `/admin/templates`) の「同期」ボタンから実行可能。
+
+**本番環境では同期APIは無効化されています**。本番での同期が必要な場合（緊急時のみ）:
+- 環境変数 `ALLOW_SYNC_API=true` を設定
+- ただし、通常はCI/CDパイプラインまたはローカルで実行を推奨
 
 #### 3. Active版の切替
 
