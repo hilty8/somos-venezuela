@@ -65,11 +65,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - EPIC-E: Admin UI for Sources management (whitelist) with create/update/delete functionality
 - EPIC-E: RSS Fetcher worker (workers/fetch-sources.ts) with automatic URL deduplication and ethical scraping
 - EPIC-E: Unit tests for RSS parsing, URL normalization, and deduplication logic
+- EPIC-F: Prompt as Code infrastructure with prompts/ and templates/ directories (Git as正本)
+- EPIC-F: Prompt/Template sync scripts with SHA256 hash-based change detection and version management
+- EPIC-F: Admin UI for prompts management with version list, active switching, and rollback capability
+- EPIC-F: Admin UI for templates management with JSON content preview and version control
+- EPIC-F: prompts/ directory with 5 initial prompts (writer, reviewer, rewrite, classify, summarize) in Markdown+YAML frontmatter
+- EPIC-F: templates/ directory with article_template_v1.md (Daily記事テンプレート定義)
 
 ### Changed
 - Admin initial password changed from固定 'admin123' to randomly generated 20-character password (shown once at seed time)
 - KGI calculation now includes last update timestamp and supports multiple campaigns
 - README expanded with detailed Railway deployment guide, cron configuration, and production verification steps
+- Prisma schema updated with SourceType enum (FILE/ADMIN) and Prompt as Code support fields (filePath, contentHash, version, description)
+- package.json: Added postinstall script for automatic `prisma generate` to optimize Railway deployment
+- Railway cron commands simplified to `pnpm worker:xxx` (removing redundant `pnpm install && prisma generate`)
 
 ### Fixed
 
@@ -78,6 +87,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - README: Added production verification workflow (campaign registration → check → cron → Home display)
 - README: Added admin password generation explanation and usage instructions
 - README: Added Sources management and RSS worker documentation with cron configuration
+- README: Added Prompt as Code section with運用フロー (Git編集 → sync → Active切替)
+- README: Unified package manager references to pnpm (removed npm alternatives)
 - .env.example: Added ADMIN_INITIAL_PASSWORD option for custom initial password
 
 ### Security

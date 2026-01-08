@@ -25,7 +25,9 @@ model AdminUser {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  auditLogs AuditLog[]
+  auditLogs        AuditLog[]
+  promptVersions   PromptVersion[]
+  templateVersions TemplateVersion[]
 
   @@map("admin_users")
 }
@@ -166,15 +168,33 @@ model RawItem {
 // EPIC-F: Templates & Prompts (Prompt as Code)
 // ============================================================
 
-model TemplateVersion {
-  id        String   @id @default(cuid())
-  name      String // "daily_v1", "daily_v2", etc.
-  content   Json // JSON定義（sections配列）
-  isActive  Boolean  @default(false)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+enum SourceType {
+  FILE // Git repository file (Prompt as Code)
+  ADMIN // Created via Admin UI
+}
 
+model TemplateVersion {
+  id          String     @id @default(cuid())
+  name        String // "daily_template", "weekly_template", etc.
+  version     String // "v1", "v2", etc.
+  description String? // Brief description
+  content     Json // JSON定義（sections配列）
+
+  // Prompt as Code support
+  sourceType       SourceType @default(FILE)
+  filePath         String? // e.g., "templates/article_template_v1.md"
+  contentHash      String? // SHA256 hash for change detection
+
+  isActive         Boolean     @default(false)
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+  createdByAdminId String?
+
+  createdByAdmin AdminUser? @relation(fields: [createdByAdminId], references: [id], onDelete: SetNull)
+
+  @@unique([name, version])
   @@index([isActive])
+  @@index([sourceType])
   @@map("template_versions")
 }
 
@@ -187,15 +207,28 @@ enum PromptType {
 }
 
 model PromptVersion {
-  id        String     @id @default(cuid())
-  type      PromptType
-  name      String // "review_v1", "rewrite_v2", etc.
-  content   String     @db.Text
-  isActive  Boolean    @default(false)
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
+  id          String     @id @default(cuid())
+  type        PromptType
+  name        String // "writer", "reviewer", "rewrite", etc.
+  version     String // "v1", "v2", etc.
+  description String? // Brief description
+  content     String     @db.Text
 
+  // Prompt as Code support
+  sourceType       SourceType @default(FILE)
+  filePath         String? // e.g., "prompts/writer.md"
+  contentHash      String? // SHA256 hash for change detection
+
+  isActive         Boolean    @default(false)
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+  createdByAdminId String?
+
+  createdByAdmin AdminUser? @relation(fields: [createdByAdminId], references: [id], onDelete: SetNull)
+
+  @@unique([type, name, version])
   @@index([type, isActive])
+  @@index([sourceType])
   @@map("prompt_versions")
 }
 

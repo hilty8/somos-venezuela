@@ -28,14 +28,12 @@
 
 - Node.js 20以上
 - PostgreSQL 14以上
-- pnpm（推奨）または npm
+- pnpm（このプロジェクトはpnpmで管理されています）
 
 ### 1. 依存関係のインストール
 
 ```bash
 pnpm install
-# または
-npm install
 ```
 
 ### 2. 環境変数の設定
@@ -116,11 +114,85 @@ pnpm worker:fetch-sources
 pnpm worker:daily-pipeline
 ```
 
+## Prompt as Code（プロンプト・テンプレート管理）
+
+このプロジェクトでは、プロンプトとテンプレートを **Git上のMarkdownファイル** として管理しています（Prompt as Code）。
+
+### ファイル構成
+
+- `prompts/` - AIプロンプトの正本（writer.md, reviewer.md, rewrite.md, classify.md, summarize.md）
+- `templates/` - 記事テンプレートの正本（article_template_v1.md）
+
+各ファイルはYAML frontmatterでメタデータを含みます：
+
+```markdown
+---
+name: writer
+version: v1
+type: DRAFT
+description: Daily記事生成用プロンプト
+---
+
+プロンプト内容...
+```
+
+### 運用フロー
+
+#### 1. プロンプト/テンプレートの変更
+
+```bash
+# prompts/*.md または templates/*.md を編集
+git add prompts/writer.md
+git commit -m "Update writer prompt for better neutrality"
+git push
+```
+
+#### 2. DBへの同期
+
+```bash
+# プロンプトを同期
+pnpm prompts:sync
+
+# テンプレートを同期
+pnpm templates:sync
+```
+
+または、Admin UI (`/admin/prompts`, `/admin/templates`) の「同期」ボタンから実行。
+
+#### 3. Active版の切替
+
+- Admin UIでバージョン一覧から「Activeにする」をクリック
+- 実行時は常にActive版が使用される
+- Rollback = 過去版をActiveにする
+
+### バージョン管理のルール
+
+- **ファイルのversion（frontmatter）を変更しない限り、再syncしても新バージョンは作成されない**
+- Content変更時は必ずversionをインクリメント（例: v1 → v2）
+- 同一versionで内容変更した場合、syncスクリプトが警告を表示
+
+### DBの役割
+
+- **正本**: Git上のMarkdownファイル
+- **DB**: Activeバージョンの参照と履歴管理のみ
+- DBで直接編集しない（SourceType=FILEは読み取り専用）
+
 ## プロジェクト構成
 
 ```
 /
 ├── docs/                    # Canonドキュメント
+├── prompts/                 # AIプロンプト（正本・Prompt as Code）
+│   ├── writer.md           # 記事生成プロンプト
+│   ├── reviewer.md         # レビュープロンプト
+│   ├── rewrite.md          # 改修プロンプト
+│   ├── classify.md         # 分類プロンプト
+│   └── summarize.md        # 要約プロンプト
+├── templates/               # 記事テンプレート（正本）
+│   └── article_template_v1.md
+├── scripts/                 # 運用スクリプト
+│   ├── sync-prompts.ts     # プロンプト同期
+│   └── sync-templates.ts   # テンプレート同期
 ├── prisma/                  # Prismaスキーマとマイグレーション
 │   ├── schema.prisma       # データベーススキーマ
 │   └── seed.ts             # 初期データ
@@ -164,13 +236,15 @@ Railway での構成は以下の通りです：
 3. **Cron Jobs** - バッチジョブ（Railwayの Cron Jobs機能）
    - **日次KGI取得**
      - Schedule: `0 */6 * * *` (6時間ごと)
-     - Command: `pnpm install && pnpm prisma generate && pnpm worker:fetch-donations`
+     - Command: `pnpm worker:fetch-donations`
    - **情報ソース取得** (M1)
      - Schedule: `0 */12 * * *` (12時間ごと)
-     - Command: `pnpm install && pnpm prisma generate && pnpm worker:fetch-sources`
+     - Command: `pnpm worker:fetch-sources`
    - **日次記事生成** (M1実装後)
      - Schedule: `0 9 * * *` (毎日9:00 UTC)
-     - Command: `pnpm install && pnpm prisma generate && pnpm worker:daily-pipeline`
+     - Command: `pnpm worker:daily-pipeline`
+
+   **注**: Railwayのcron jobsは、Webサービスと同じビルド済みイメージを使用するため、依存関係のインストールは不要です。Webサービスのビルド時に `pnpm install && pnpm prisma generate` が実行されます。
 
 ### デプロイ手順
 
@@ -179,6 +253,8 @@ Railway での構成は以下の通りです：
 ```bash
 # Railway CLIをインストール（初回のみ）
 npm install -g @railway/cli
+# または
+pnpm add -g @railway/cli
 
 # Railwayにログイン
 railway login

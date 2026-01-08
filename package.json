@@ -9,6 +9,7 @@
     "lint": "next lint",
     "test": "vitest run",
     "test:watch": "vitest",
+    "postinstall": "prisma generate",
     "db:push": "prisma db push",
     "db:migrate": "prisma migrate dev",
     "db:migrate:deploy": "prisma migrate deploy",
@@ -16,7 +17,9 @@
     "db:studio": "prisma studio",
     "worker:fetch-donations": "tsx workers/fetch-donations.ts",
     "worker:fetch-sources": "tsx workers/fetch-sources.ts",
-    "worker:daily-pipeline": "tsx workers/daily-pipeline.ts"
+    "worker:daily-pipeline": "tsx workers/daily-pipeline.ts",
+    "prompts:sync": "tsx scripts/sync-prompts.ts",
+    "templates:sync": "tsx scripts/sync-templates.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
