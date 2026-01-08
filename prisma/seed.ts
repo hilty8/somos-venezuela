@@ -1,13 +1,30 @@
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcrypt";
+import crypto from "crypto";
 
 const prisma = new PrismaClient();
+
+// Generate random password (20 characters, alphanumeric + special chars)
+function generatePassword(length: number = 20): string {
+  const charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*";
+  const randomBytes = crypto.randomBytes(length);
+  let password = "";
+  for (let i = 0; i < length; i++) {
+    password += charset[randomBytes[i] % charset.length];
+  }
+  return password;
+}
 
 async function main() {
   console.log("🌱 Seeding database...");
 
-  // Create admin user
-  const hashedPassword = await bcrypt.hash("admin123", 10);
+  // Generate random initial password
+  const initialPassword = process.env.ADMIN_INITIAL_PASSWORD || generatePassword(20);
+  const hashedPassword = await bcrypt.hash(initialPassword, 10);
+
+  const existingAdmin = await prisma.adminUser.findUnique({
+    where: { email: "admin@somos-venezuela.org" },
+  });
 
   const admin = await prisma.adminUser.upsert({
     where: { email: "admin@somos-venezuela.org" },
@@ -19,7 +36,14 @@ async function main() {
     },
   });
 
-  console.log("✅ Created admin user:", admin.email);
+  if (!existingAdmin) {
+    console.log("✅ Created admin user:", admin.email);
+    console.log("🔑 INITIAL PASSWORD (save this - shown only once):");
+    console.log("   ", initialPassword);
+    console.log("   Please change this password after first login!");
+  } else {
+    console.log("✅ Admin user already exists:", admin.email);
+  }
 
   // Create initial template version (daily_v1)
   const template = await prisma.templateVersion.upsert({

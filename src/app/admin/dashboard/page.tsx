@@ -1,5 +1,61 @@
 import { auth, signOut } from "@/lib/auth";
 import { redirect } from "next/navigation";
+import { db } from "@/lib/db";
+
+async function getDashboardStats() {
+  // KGI
+  const campaigns = await db.donationCampaign.findMany({
+    where: { isActive: true },
+    include: {
+      snapshots: {
+        orderBy: { fetchedAt: "desc" },
+        take: 1,
+      },
+    },
+  });
+
+  let totalAmount = 0;
+  let lastUpdate: Date | null = null;
+
+  for (const campaign of campaigns) {
+    if (campaign.snapshots.length > 0) {
+      const snapshot = campaign.snapshots[0];
+      totalAmount += Number(snapshot.amount);
+
+      if (!lastUpdate || snapshot.fetchedAt > lastUpdate) {
+        lastUpdate = snapshot.fetchedAt;
+      }
+    }
+  }
+
+  // Campaign count
+  const campaignCount = campaigns.length;
+
+  // Click count (last 24 hours)
+  const yesterday = new Date();
+  yesterday.setHours(yesterday.getHours() - 24);
+
+  const clickCount = await db.clickEvent.count({
+    where: {
+      clickedAt: {
+        gte: yesterday,
+      },
+    },
+  });
+
+  // Article count (published)
+  const articleCount = await db.article.count({
+    where: { status: "PUBLISHED" },
+  });
+
+  return {
+    kgi: totalAmount,
+    lastUpdate,
+    campaignCount,
+    clickCount,
+    articleCount,
+  };
+}
 
 export default async function DashboardPage() {
   const session = await auth();
@@ -7,6 +63,8 @@ export default async function DashboardPage() {
   if (!session) {
     redirect("/admin/login");
   }
+
+  const stats = await getDashboardStats();
 
   return (
     <div className="min-h-screen bg-gray-100">
@@ -41,14 +99,21 @@ export default async function DashboardPage() {
           {/* KGI Card */}
           <div className="bg-white rounded-lg shadow p-6">
             <h2 className="text-lg font-semibold mb-2">KGI（累計寄付金額）</h2>
-            <p className="text-3xl font-bold text-blue-600">$0</p>
-            <p className="text-sm text-gray-500 mt-2">最終更新: -</p>
+            <p className="text-3xl font-bold text-blue-600">
+              ${stats.kgi.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </p>
+            <p className="text-sm text-gray-500 mt-2">
+              {stats.lastUpdate
+                ? `最終更新: ${stats.lastUpdate.toLocaleString("ja-JP")}`
+                : "最終更新: -"}
+            </p>
+            <p className="text-xs text-gray-400 mt-1">直近24h クリック: {stats.clickCount}</p>
           </div>
 
           {/* Campaigns Card */}
           <div className="bg-white rounded-lg shadow p-6">
             <h2 className="text-lg font-semibold mb-2">寄付キャンペーン</h2>
-            <p className="text-3xl font-bold text-green-600">0</p>
+            <p className="text-3xl font-bold text-green-600">{stats.campaignCount}</p>
             <p className="text-sm text-gray-500 mt-2">登録済み</p>
             <a href="/admin/campaigns" className="text-sm text-blue-600 hover:underline mt-4 inline-block">
               管理 →
@@ -58,7 +123,7 @@ export default async function DashboardPage() {
           {/* Articles Card */}
           <div className="bg-white rounded-lg shadow p-6">
             <h2 className="text-lg font-semibold mb-2">記事</h2>
-            <p className="text-3xl font-bold text-purple-600">0</p>
+            <p className="text-3xl font-bold text-purple-600">{stats.articleCount}</p>
             <p className="text-sm text-gray-500 mt-2">公開中</p>
             <a href="/admin/articles" className="text-sm text-blue-600 hover:underline mt-4 inline-block">
               管理 →

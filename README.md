@@ -64,6 +64,16 @@ pnpm db:migrate
 pnpm db:seed
 ```
 
+**重要**: `pnpm db:seed` を実行すると、ランダムな初回パスワードが生成され、コンソールに1回だけ表示されます。このパスワードを必ず保存してください！
+
+```
+🔑 INITIAL PASSWORD (save this - shown only once):
+    xK8@mP2#qR5!vN9...
+    Please change this password after first login!
+```
+
+環境変数 `ADMIN_INITIAL_PASSWORD` を設定することで、固定パスワードを使用することもできます（開発環境のみ推奨）。
+
 ### 4. 開発サーバーの起動
 
 ```bash
@@ -71,6 +81,10 @@ pnpm dev
 ```
 
 アプリケーションは http://localhost:3000 で起動します。
+
+管理画面: http://localhost:3000/admin/dashboard
+- Email: `admin@somos-venezuela.org`
+- Password: seed時に表示されたパスワード
 
 ### 5. データベース管理（Prisma Studio）
 
@@ -125,26 +139,143 @@ Railway での構成は以下の通りです：
 ### サービス構成
 
 1. **Web** - Next.jsアプリケーション（Public + Admin + API）
-   - Build Command: `pnpm build`
+   - Build Command: `pnpm install && pnpm prisma generate && pnpm build`
    - Start Command: `pnpm start`
    - Port: 3000
+   - 環境変数:
+     - `DATABASE_URL` (PostgreSQLサービスから自動設定)
+     - `NEXTAUTH_SECRET` (ランダム文字列32文字以上)
+     - `NEXTAUTH_URL` (デプロイ後のURL、例: `https://your-app.up.railway.app`)
+     - LLM関連の環境変数（`.env.example` 参照）
 
-2. **Worker** - バッチジョブ（別プロセス）
-   - 日次KGI取得: `pnpm worker:fetch-donations`
-   - 日次記事生成: `pnpm worker:daily-pipeline`
-   - Cron設定（Railwayの Cron Jobs機能を使用）
-
-3. **PostgreSQL** - データベース
+2. **PostgreSQL** - データベース
    - Railway の PostgreSQL プラグインを使用
+   - 自動的に `DATABASE_URL` が Web サービスに注入される
 
-### 環境変数
+3. **Cron Jobs** - バッチジョブ（Railwayの Cron Jobs機能）
+   - **日次KGI取得**
+     - Schedule: `0 */6 * * *` (6時間ごと)
+     - Command: `pnpm install && pnpm prisma generate && pnpm worker:fetch-donations`
+   - **日次記事生成** (M1実装後)
+     - Schedule: `0 9 * * *` (毎日9:00 UTC)
+     - Command: `pnpm install && pnpm prisma generate && pnpm worker:daily-pipeline`
 
-Railwayの各サービスに以下の環境変数を設定：
+### デプロイ手順
 
-- `DATABASE_URL` (Railwayが自動設定)
-- `NEXTAUTH_SECRET`
-- `NEXTAUTH_URL` (デプロイ後のURL)
-- LLM関連の環境変数（`.env.example` 参照）
+#### 1. Railwayプロジェクトの作成
+
+```bash
+# Railway CLIをインストール（初回のみ）
+npm install -g @railway/cli
+
+# Railwayにログイン
+railway login
+
+# 新規プロジェクト作成
+railway init
+```
+
+#### 2. PostgreSQLの追加
+
+Railway ダッシュボードで:
+1. "New Service" → "Database" → "PostgreSQL" を選択
+2. 自動的に `DATABASE_URL` が生成される
+
+#### 3. Webサービスのデプロイ
+
+```bash
+# プロジェクトをRailwayにリンク
+railway link
+
+# デプロイ
+railway up
+```
+
+#### 4. 環境変数の設定
+
+Railway ダッシュボードで Web サービスに以下を設定:
+- `NEXTAUTH_SECRET`: `openssl rand -base64 32` で生成
+- `NEXTAUTH_URL`: デプロイ後の URL (例: `https://your-app.up.railway.app`)
+- `ADMIN_INITIAL_PASSWORD`: (オプション) 初回管理者パスワード
+
+#### 5. データベースマイグレーション
+
+```bash
+# Railwayのシェルで実行
+railway run pnpm db:migrate:deploy
+railway run pnpm db:seed
+```
+
+**重要**: `pnpm db:seed` 実行時に表示される初回パスワードを保存してください！
+
+#### 6. Cron Jobsの設定
+
+Railway ダッシュボードで:
+1. "New Service" → "Cron Job" を選択
+2. 環境変数を Web サービスと同じに設定（`DATABASE_URL` も必要）
+3. Schedule と Command を設定（上記参照）
+
+### 本番環境での動作確認手順
+
+#### 1. 管理画面ログイン
+
+1. `https://your-app.up.railway.app/admin/login` にアクセス
+2. Email: `admin@somos-venezuela.org`
+3. Password: seed時に出力されたパスワード
+
+#### 2. 寄付キャンペーン登録
+
+1. `/admin/campaigns` で「新規キャンペーン」をクリック
+2. 以下を入力:
+   - 名前: 例 "UNHCR Venezuela Emergency"
+   - カテゴリ: "refugee"
+   - 提供元: "UNHCR"
+   - 公開合計URL: キャンペーンページのURL
+   - Parse Config (JSON):
+     ```json
+     {
+       "selector": ".total-amount",
+       "regex": "\\$([\\d,]+(?:\\.\\d{2})?)",
+       "currency": "USD"
+     }
+     ```
+   - 寄付URL: 実際の寄付ページURL
+
+#### 3. 手動チェック実行
+
+1. キャンペーン一覧で「テスト」ボタンをクリック
+2. 成功すれば金額が取得され、スナップショットが保存される
+3. 失敗した場合はエラーメッセージを確認し、Parse Configを調整
+
+#### 4. Cron実行確認
+
+1. Railway ダッシュボードで Cron Job のログを確認
+2. 正常に実行されていることを確認
+3. `/admin/dashboard` でKGIが更新されていることを確認
+
+#### 5. Public Homeで確認
+
+1. `https://your-app.up.railway.app/` にアクセス
+2. KGI（累計寄付金額）が表示されていることを確認
+3. 最終更新日時が正しいことを確認
+
+### トラブルシューティング
+
+#### KGIが0のまま
+
+- Cron Jobが実行されているか確認（Railwayダッシュボード）
+- キャンペーンの `isActive` が `true` になっているか確認
+- Parse Configが正しいか「テスト」ボタンで確認
+
+#### 管理画面にログインできない
+
+- `NEXTAUTH_SECRET` と `NEXTAUTH_URL` が正しく設定されているか確認
+- パスワードは seed 実行時に表示されたものを使用
+
+#### Prisma エラー
+
+- `DATABASE_URL` が正しく設定されているか確認
+- デプロイ後に `railway run pnpm prisma generate` を実行
 
 ## 開発ワークフロー
 
