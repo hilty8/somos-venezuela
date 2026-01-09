@@ -148,19 +148,28 @@ model Source {
   @@map("sources")
 }
 
+enum RawItemStatus {
+  NEW
+  PROCESSED
+  FAILED
+}
+
 model RawItem {
-  id          String   @id @default(cuid())
+  id          String        @id @default(cuid())
   sourceId    String
-  url         String   @unique
+  url         String        @unique
   title       String?
-  content     String?  @db.Text
+  content     String?       @db.Text
   publishedAt DateTime?
-  fetchedAt   DateTime @default(now())
+  fetchedAt   DateTime      @default(now())
+  status      RawItemStatus @default(NEW)
+  errorReason String?       @db.Text
 
   source Source @relation(fields: [sourceId], references: [id], onDelete: Cascade)
 
   @@index([sourceId])
   @@index([publishedAt])
+  @@index([status])
   @@map("raw_items")
 }
 
@@ -251,12 +260,21 @@ enum BlockType {
 
 model Article {
   id               String        @id @default(cuid())
+  slug             String        @unique
   status           ArticleStatus @default(DRAFT)
   publishedAt      DateTime?
 
   // Article Content
   title            String
   summary          String?       @db.Text
+
+  // Source tracking
+  sourceIds        String[] // Array of source IDs
+  rawItemIds       String[] // Array of raw_item IDs
+
+  // Classification (from classify prompt)
+  category           String? // "humanitarian", "refugee", "health", etc.
+  classifyConfidence Float? // 0.0 - 1.0
 
   // Version tracking
   templateVersionId String?
@@ -270,6 +288,7 @@ model Article {
 
   @@index([status])
   @@index([publishedAt])
+  @@index([category])
   @@map("articles")
 }
 
@@ -294,9 +313,12 @@ model ReviewRun {
   articleId String
 
   // Review Result
-  passed    Boolean
-  score     Json // { evidence: 8, neutrality: 9, overclaim: 7, dignity: 10, scope: 9 }
-  feedback  String?  @db.Text
+  passed           Boolean
+  scoreTotal       Float? // 0-100 average score
+  scoresByCategory Json // { evidence: 85, neutrality: 90, overclaim: 75, dignity: 95, scope: 88 }
+  feedback         String?  @db.Text
+  hardFailReasons  String[] // Array of hard fail rule violations
+  suggestions      String[] // Array of improvement suggestions
 
   // Auto-fix tracking
   attemptNumber Int @default(1) // 1, 2, or 3
@@ -308,6 +330,31 @@ model ReviewRun {
   @@index([articleId])
   @@index([createdAt])
   @@map("review_runs")
+}
+
+enum PipelineStatus {
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+model PipelineRun {
+  id         String         @id @default(cuid())
+  status     PipelineStatus @default(RUNNING)
+  startedAt  DateTime       @default(now())
+  finishedAt DateTime?
+
+  // Execution config
+  sourceId String?
+  limit    Int?
+
+  // Results
+  stats Json? // { published: 2, hold: 1, failed: 3, total: 6 }
+  logs  String? @db.Text
+
+  @@index([startedAt])
+  @@index([status])
+  @@map("pipeline_runs")
 }
 
 // ============================================================

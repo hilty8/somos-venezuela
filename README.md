@@ -108,11 +108,35 @@ pnpm worker:fetch-sources
 
 このWorkerは、登録された情報ソース（ホワイトリスト）からRSS/スクレイプで記事を収集し、`raw_items` テーブルに保存します。URL重複は自動的に排除されます。
 
-### 日次記事生成パイプライン
+### 日次記事生成パイプライン（G0: 手動実行）
 
 ```bash
 pnpm worker:daily-pipeline
 ```
+
+または、Admin UI (`/admin/pipeline`) から手動実行できます。
+
+**パイプラインの流れ:**
+1. raw_items（status=NEW）を取得
+2. 各アイテムに対して:
+   - 記事生成（writer prompt + template）
+   - ブロック検証（FACT must have evidence_urls）
+   - 分類（classify prompt）
+   - レビュー（Hard Fail rules + LLM scoring 0-100）
+   - 不合格の場合: リライト（最大2回）
+   - 合格: 公開（PUBLISHED）
+   - 不合格: 保留（HOLD）
+3. 統計とログを保存
+
+**レビュー基準（0-100スケール）:**
+- 各カテゴリ最低スコア: 70点（Evidence, Neutrality, Overclaim, Dignity, Scope）
+- 平均スコア: 80.0点以上
+- Hard Fail違反（政治的評価語/断罪/煽動）は即不合格
+
+**環境変数:**
+- `REVIEW_PASS_SCORE_MIN="70"` - カテゴリ別最低スコア（0-100）
+- `REVIEW_PASS_SCORE_AVG="80"` - 平均最低スコア（0-100）
+- `REVIEW_MAX_AUTOFIX_ATTEMPTS="2"` - リライト最大回数
 
 ## Prompt as Code（プロンプト・テンプレート管理）
 
@@ -203,11 +227,14 @@ pnpm templates:sync
 ├── src/
 │   ├── app/                # Next.js App Router
 │   │   ├── (public)/      # 公開サイト
+│   │   ├── news/          # 記事一覧・詳細（公開）
 │   │   ├── admin/         # 管理画面
+│   │   │   └── pipeline/  # パイプライン実行UI
 │   │   └── api/           # API Routes
 │   ├── lib/               # 共通ライブラリ
 │   │   ├── db.ts         # Prisma Client
-│   │   ├── llm/          # LLM抽象化レイヤー
+│   │   ├── llm/          # LLM抽象化レイヤー（OpenAI/Anthropic/Groq）
+│   │   ├── pipeline/     # 記事生成パイプライン
 │   │   └── utils/        # ユーティリティ
 │   └── components/        # Reactコンポーネント
 ├── workers/               # バッチジョブスクリプト
