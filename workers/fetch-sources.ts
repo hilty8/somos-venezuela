@@ -184,7 +184,19 @@ async function fetchScrape(source: {
 }
 
 async function main() {
+  const startTime = Date.now();
   console.log("🚀 Starting source fetch worker...");
+
+  // Check kill switch
+  const isEnabled = process.env.FETCH_SOURCES_ENABLED !== "false";
+  if (!isEnabled) {
+    const duration = Date.now() - startTime;
+    console.log("⚠️  FETCH_SOURCES_ENABLED=false - Worker disabled. Exiting.");
+    console.log(
+      `[fetch-sources] status=skipped total=0 added=0 skipped=0 duration_ms=${duration} reason=kill_switch`
+    );
+    return;
+  }
 
   const sources = await prisma.source.findMany({
     where: { isActive: true },
@@ -234,8 +246,15 @@ async function main() {
     await new Promise((resolve) => setTimeout(resolve, 3000));
   }
 
+  const duration = Date.now() - startTime;
+
   console.log(`\n✅ Source fetch worker completed`);
   console.log(`📊 Total: ${totalAdded} items added, ${totalSkipped} duplicates skipped`);
+
+  // Summary log (1-line for monitoring)
+  console.log(
+    `[fetch-sources] status=success total=${sources.length} added=${totalAdded} skipped=${totalSkipped} duration_ms=${duration}`
+  );
 }
 
 main()

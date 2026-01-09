@@ -52,6 +52,8 @@ export interface PipelineRunStats {
   published: number;
   hold: number;
   failed: number;
+  llm_calls?: number; // Total LLM API calls made during pipeline execution
+  duration_ms?: number; // Duration of pipeline execution in milliseconds
 }
 
 export interface PipelineLog {

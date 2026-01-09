@@ -45,12 +45,15 @@ export interface PipelineRunResult {
 export async function runPipeline(
   options: PipelineRunOptions = {}
 ): Promise<PipelineRunResult> {
+  const startTime = Date.now();
   const logs: PipelineLog[] = [];
   const stats: PipelineRunStats = {
     total: 0,
     published: 0,
     hold: 0,
     failed: 0,
+    llm_calls: 0,
+    duration_ms: 0,
   };
 
   // Create pipeline run record
@@ -117,10 +120,12 @@ export async function runPipeline(
       `Pipeline completed: ${stats.published} published, ${stats.hold} hold, ${stats.failed} failed`
     );
 
+    stats.duration_ms = Date.now() - startTime;
     await updatePipelineRun(runId, "COMPLETED", stats, logs);
   } catch (error) {
     const errorMessage = (error as Error).message;
     addLog(logs, "error", `Pipeline failed: ${errorMessage}`);
+    stats.duration_ms = Date.now() - startTime;
     await updatePipelineRun(runId, "FAILED", stats, logs);
     throw error;
   }
@@ -159,6 +164,12 @@ async function processRawItem(
     },
   });
 
+  // Fetch source for validation context
+  const source = await db.source.findUnique({
+    where: { id: rawItem.sourceId },
+    select: { url: true },
+  });
+
   // Step 1: Generate article
   addLog(logs, "info", "Generating article...", rawItem.id);
   let article = await generateArticle({
@@ -172,7 +183,10 @@ async function processRawItem(
 
   // Step 2: Validate blocks (FACT must have evidence)
   addLog(logs, "info", "Validating blocks...", rawItem.id);
-  const validation = validateBlocks(article.blocks);
+  const validation = validateBlocks(article.blocks, {
+    rawItemUrl: rawItem.url,
+    sourceUrl: source?.url || "",
+  });
   article.blocks = validation.blocks;
 
   if (validation.changedCount > 0) {

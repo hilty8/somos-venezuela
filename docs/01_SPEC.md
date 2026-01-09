@@ -302,13 +302,46 @@ NEW → PROCESSING → PROCESSED (成功: 記事PUBLISHED)
 3. **平均スコアが80.0以上**
 4. **FACTブロックに evidence_urls が必須**（最低1つ。なければUNVERIFIEDに自動変換）
 
-### 10.4 環境変数
+### 10.4 evidence_urls バリデーションルール（Launch Readiness）
+
+記事生成時、FACTブロックの evidence_urls は以下のルールで自動的に検証・補正されます：
+
+1. **一次ソースURL優先ルール**
+   - raw_item.url（記事の元となったURL）を evidence_urls の先頭に自動追加
+   - 既に含まれている場合はスキップ
+   - 目的：最低1つは一次情報源を保証
+
+2. **URL形式チェック**
+   - 不正なURL形式（プロトコルなし、ドメイン不正など）は削除
+   - 警告ログに記録
+
+3. **重複排除**
+   - 同じURLが複数回含まれている場合、重複を削除
+   - 警告ログに重複件数を記録
+
+4. **最大件数上限**
+   - evidence_urls は最大5件まで
+   - 超過分は先頭から5件のみ採用
+   - 警告ログに元の件数と削減後の件数を記録
+
+5. **ドメイン検証（ホワイトリストチェック）**
+   - source.url のドメインと一致しない evidence_urls を検出
+   - **全てのURLが信頼できないドメインの場合**：ブロックを UNVERIFIED に自動変換
+   - **一部のURLが信頼できないドメインの場合**：警告ログのみ（ブロックは維持）
+   - 目的：sources ホワイトリスト外の情報源への依存を制限
+
+**注意事項**：
+- これらのルールは article generation → validate blocks 時に自動適用される
+- FACT → UNVERIFIED への変換は changedCount にカウントされる
+- すべての変換・警告は PipelineRun のログに記録される
+
+### 10.6 環境変数
 - `REVIEW_PASS_SCORE_MIN="70"` - カテゴリ別最低スコア（0-100）
 - `REVIEW_PASS_SCORE_AVG="80"` - 平均最低スコア（0-100）
 - `REVIEW_FACT_EVIDENCE_REQUIRED="true"` - FACT必須出典チェック
 - `REVIEW_MAX_AUTOFIX_ATTEMPTS="2"` - リライト最大回数
 
-### 10.5 即Fail条件（Hard Fail Rules）
+### 10.7 即Fail条件（Hard Fail Rules）
 - FACTブロックに出典URLがない
 - 政治的評価語・断罪表現・煽動表現が存在
 - 過度な主観的・感情的表現（3箇所以上）

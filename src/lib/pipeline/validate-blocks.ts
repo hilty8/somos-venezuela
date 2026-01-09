@@ -13,11 +13,19 @@ export interface ValidationResult {
   warnings: string[];
 }
 
+export interface ValidationContext {
+  rawItemUrl: string;
+  sourceUrl: string;
+}
+
+const MAX_EVIDENCE_URLS = 5;
+
 /**
  * Validate article blocks and convert FACT without evidence to UNVERIFIED
  */
 export function validateBlocks(
-  blocks: ArticleBlockData[]
+  blocks: ArticleBlockData[],
+  context?: ValidationContext
 ): ValidationResult {
   const validatedBlocks: ArticleBlockData[] = [];
   const warnings: string[] = [];
@@ -40,8 +48,21 @@ export function validateBlocks(
         continue;
       }
 
-      // Validate evidence URLs format
-      const validUrls = block.evidenceUrls.filter((url) => {
+      // Enhance evidence URLs with context-aware validation
+      let processedUrls = [...block.evidenceUrls];
+
+      // 1. Ensure raw_item.url is included (priority rule)
+      if (context && context.rawItemUrl) {
+        if (!processedUrls.includes(context.rawItemUrl)) {
+          processedUrls.unshift(context.rawItemUrl); // Add to front
+          warnings.push(
+            `Block #${i + 1}: Added raw_item.url as primary evidence source`
+          );
+        }
+      }
+
+      // 2. Validate URL format and filter invalid URLs
+      const validUrls = processedUrls.filter((url) => {
         try {
           new URL(url);
           return true;
@@ -53,7 +74,52 @@ export function validateBlocks(
         }
       });
 
-      if (validUrls.length === 0) {
+      // 3. Deduplicate evidence URLs
+      const uniqueUrls = Array.from(new Set(validUrls));
+      if (uniqueUrls.length < validUrls.length) {
+        warnings.push(
+          `Block #${i + 1}: Removed ${validUrls.length - uniqueUrls.length} duplicate URL(s)`
+        );
+      }
+
+      // 4. Limit to MAX_EVIDENCE_URLS
+      let finalUrls = uniqueUrls;
+      if (uniqueUrls.length > MAX_EVIDENCE_URLS) {
+        finalUrls = uniqueUrls.slice(0, MAX_EVIDENCE_URLS);
+        warnings.push(
+          `Block #${i + 1}: Limited evidence URLs to ${MAX_EVIDENCE_URLS} (had ${uniqueUrls.length})`
+        );
+      }
+
+      // 5. Domain validation (sources whitelist check)
+      if (context && context.sourceUrl) {
+        const sourceDomain = extractDomain(context.sourceUrl);
+        const untrustedUrls = finalUrls.filter((url) => {
+          const urlDomain = extractDomain(url);
+          return urlDomain !== sourceDomain;
+        });
+
+        if (untrustedUrls.length > 0 && untrustedUrls.length === finalUrls.length) {
+          // All URLs are from untrusted domains -> convert to UNVERIFIED
+          warnings.push(
+            `Block #${i + 1}: All evidence URLs are from untrusted domains (not ${sourceDomain}) - converted to UNVERIFIED`
+          );
+          validatedBlocks.push({
+            ...block,
+            type: "UNVERIFIED",
+            evidenceUrls: finalUrls,
+          });
+          changedCount++;
+          continue;
+        } else if (untrustedUrls.length > 0) {
+          // Some URLs are untrusted -> warning only
+          warnings.push(
+            `Block #${i + 1}: ${untrustedUrls.length} evidence URL(s) from untrusted domains`
+          );
+        }
+      }
+
+      if (finalUrls.length === 0) {
         warnings.push(
           `Block #${i + 1} labeled as FACT but all evidence URLs are invalid - converted to UNVERIFIED`
         );
@@ -69,7 +135,7 @@ export function validateBlocks(
       // Valid FACT block
       validatedBlocks.push({
         ...block,
-        evidenceUrls: validUrls,
+        evidenceUrls: finalUrls,
       });
     } else {
       // INFERENCE or UNVERIFIED blocks don't require evidence
@@ -138,4 +204,16 @@ export function parseArticleBlocks(jsonResponse: any): ArticleBlockData[] {
   }
 
   return blocks;
+}
+
+/**
+ * Extract domain from URL for comparison
+ */
+function extractDomain(url: string): string {
+  try {
+    const parsed = new URL(url);
+    return parsed.hostname.toLowerCase().replace(/^www\./, "");
+  } catch {
+    return "";
+  }
 }

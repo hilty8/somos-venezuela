@@ -89,6 +89,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Production Runbook: UTC/JST timezone handling documentation for Railway Cron (UTC-based schedules with conversion examples)
 - Support button: Priority-based campaign selection with highest priority active campaign displayed on article detail pages
 - Support button: /go/{campaign_id} redirect with click tracking for KGI measurement (already implemented in G1)
+- Launch Readiness Gate: JSON repair logic with 1 retry attempt for malformed LLM outputs
+- Launch Readiness Gate: Enhanced evidence_urls validation (raw_item.url priority, domain check, deduplication, max 5 URLs)
+- Launch Readiness Gate: Operational kill switches (PIPELINE_ENABLED, FETCH_SOURCES_ENABLED, FETCH_DONATIONS_ENABLED)
+- Launch Readiness Gate: Summary logs for all workers (1-line monitoring format with status/metrics/duration_ms)
+- Launch Readiness Gate: Standardized PipelineRun.stats keys (total, published, hold, failed, duration_ms, llm_calls)
+- Launch Readiness Gate: Unit tests for JSON repair and failure handling
 
 ### Changed
 - Admin initial password changed from固定 'admin123' to randomly generated 20-character password (shown once at seed time)
@@ -110,7 +116,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - README: Added Sources management and RSS worker documentation with cron configuration
 - README: Added Prompt as Code section with運用フロー (Git編集 → sync → Active切替)
 - README: Unified package manager references to pnpm (removed npm alternatives)
+- README: Added Operational Kill Switches and JSON Repair Policy sections to Production Runbook
 - .env.example: Added ADMIN_INITIAL_PASSWORD option for custom initial password
+- .env.example: Added operational kill switches (PIPELINE_ENABLED, FETCH_SOURCES_ENABLED, FETCH_DONATIONS_ENABLED)
+- docs/01_SPEC.md: Added Section 10.4 evidence_urls validation rules (raw_item.url priority, domain check, deduplication, max 5 URLs)
 
 ### Security
 - Random password generation for initial admin user to prevent default password vulnerability (uses crypto.randomBytes)

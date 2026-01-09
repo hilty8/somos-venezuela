@@ -30,6 +30,32 @@ const MAX_RETRY_PER_ITEM = parseInt(
 
 async function main() {
   console.log("=== Daily Pipeline Worker Started ===");
+
+  // Check kill switch
+  const isEnabled = process.env.PIPELINE_ENABLED !== "false";
+  if (!isEnabled) {
+    console.log("⚠️  PIPELINE_ENABLED=false - Worker disabled. Exiting.");
+
+    // Log to PipelineRun for observability
+    await db.pipelineRun.create({
+      data: {
+        status: "COMPLETED",
+        startedAt: new Date(),
+        finishedAt: new Date(),
+        stats: {
+          total: 0,
+          published: 0,
+          hold: 0,
+          failed: 0,
+          reason: "PIPELINE_ENABLED=false (kill switch)",
+        },
+        logs: "[daily-pipeline] Skipped: PIPELINE_ENABLED=false",
+      },
+    });
+
+    return;
+  }
+
   console.log(`Max items per run: ${MAX_ITEMS_PER_RUN}`);
   console.log(`Max items per source: ${MAX_ITEMS_PER_SOURCE}`);
   console.log(`Max retry per item: ${MAX_RETRY_PER_ITEM}`);
@@ -141,9 +167,15 @@ async function main() {
       );
     }
 
+    // Summary log (1-line for monitoring)
+    console.log(
+      `[daily-pipeline] status=success processed=${result.stats.total} published=${result.stats.published} hold=${result.stats.hold} failed=${result.stats.failed} duration_ms=${result.stats.duration_ms || 0}`
+    );
+
     console.log("\n=== Daily Pipeline Worker Completed ===");
   } catch (error) {
     console.error("Daily pipeline worker failed:", error);
+    console.log("[daily-pipeline] status=error error=\"${error}\"");
     throw error;
   }
 }

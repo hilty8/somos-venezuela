@@ -38,9 +38,19 @@ export async function generateArticle(
     const jsonText = jsonMatch ? jsonMatch[1] : response.content;
     parsedResponse = JSON.parse(jsonText);
   } catch (error) {
-    throw new Error(
-      `Failed to parse LLM response as JSON: ${(error as Error).message}`
+    // Attempt JSON repair (1 retry only)
+    console.warn(
+      "[generate-article] JSON parse failed, attempting repair:",
+      (error as Error).message
     );
+    try {
+      parsedResponse = await repairJSON(response.content, writerPrompt);
+      console.log("[generate-article] JSON repair successful");
+    } catch (repairError) {
+      throw new Error(
+        `INVALID_JSON: Failed to parse and repair LLM response. Original error: ${(error as Error).message}, Repair error: ${(repairError as Error).message}`
+      );
+    }
   }
 
   // Extract title (from template's title field or first headline)
@@ -120,4 +130,33 @@ function extractSummary(parsedResponse: any): string {
   }
 
   return "";
+}
+
+/**
+ * Attempt to repair malformed JSON using LLM
+ * @param malformedJSON - The broken JSON string
+ * @param writerPrompt - The original writer prompt (for context)
+ * @returns Parsed JSON object
+ */
+async function repairJSON(
+  malformedJSON: string,
+  writerPrompt: string
+): Promise<any> {
+  const repairPrompt = `
+The following text should be valid JSON but contains syntax errors. Please fix the JSON and return ONLY the corrected JSON without any explanation or markdown formatting.
+
+Broken JSON:
+${malformedJSON}
+
+Return the corrected JSON:
+`.trim();
+
+  const response = await callLLM("DRAFT", repairPrompt, writerPrompt);
+
+  // Extract JSON from response
+  const jsonMatch = response.content.match(/```json\s*([\s\S]*?)\s*```/);
+  const jsonText = jsonMatch ? jsonMatch[1] : response.content;
+
+  // Parse the repaired JSON (will throw if still invalid)
+  return JSON.parse(jsonText);
 }

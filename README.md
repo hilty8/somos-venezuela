@@ -721,6 +721,59 @@ railway run --service web pnpm worker:daily-pipeline
 - [ ] PostgreSQL の `DATABASE_URL` が外部に漏れていない
 - [ ] Audit Logs が有効化されている（管理者操作の記録）
 
+### Operational Kill Switches（運用キルスイッチ）
+
+本番環境で問題が発生した場合、各 worker を即座に停止できるキルスイッチが用意されています。
+
+**環境変数**:
+- `PIPELINE_ENABLED="true"` - 日次記事生成パイプラインの有効/無効
+- `FETCH_SOURCES_ENABLED="true"` - 情報ソース取得の有効/無効
+- `FETCH_DONATIONS_ENABLED="true"` - KGI寄付金額取得の有効/無効
+
+**使用方法**:
+1. Railway ダッシュボード → 該当サービス → Variables で環境変数を `false` に設定
+2. 次回の Cron 実行時、worker はスキップされ、ログに理由が記録される
+3. 問題解決後、環境変数を `true` に戻す
+
+**注意事項**:
+- `false` に設定すると、worker は何も実行せず即座に終了します
+- PipelineRun または worker ログに「kill switch」による停止理由が記録されます
+- 緊急時（LLM API制限、予算超過、データ品質問題等）に使用してください
+
+**監視**:
+- 各 worker のログに1行サマリーが出力されます（status=skipped reason=kill_switch）
+- `/admin/ops` で停止中のパイプラインを確認できます
+
+### JSON Repair Policy（JSON修復方針）
+
+LLMが生成する JSON が不正な形式の場合、自動修復機能が動作します。
+
+**修復フロー**:
+1. **初回 Parse**: LLM の出力を JSON.parse で解析
+2. **Parse 失敗時**: LLM に「JSONとして修復して返す」短いプロンプトを送信（1回のみ）
+3. **修復成功**: 修復済み JSON で記事生成を続行
+4. **修復失敗**: raw_item を FAILED にマーク、errorReason に "INVALID_JSON:" プレフィックス付きエラーを記録
+
+**リトライルール**:
+- JSON 修復失敗は通常の FAILED として扱われる
+- `PIPELINE_MAX_RETRY_PER_ITEM` の上限内で自動リトライされる（デフォルト: 2回）
+- 3回目も失敗した場合、管理者が `/admin/ops` で確認・手動対処
+
+**監視ポイント**:
+- `/admin/ops` の Failed Items で "INVALID_JSON" エラーを確認
+- 頻発する場合、writer prompt またはテンプレートの見直しが必要
+
+**ログ例**:
+```
+[generate-article] JSON parse failed, attempting repair: Unexpected token...
+[generate-article] JSON repair successful
+```
+または
+```
+[generate-article] JSON parse failed, attempting repair: Unexpected token...
+INVALID_JSON: Failed to parse and repair LLM response. Original error: ..., Repair error: ...
+```
+
 ### パフォーマンスチューニング
 
 **パイプライン制御の調整**:
