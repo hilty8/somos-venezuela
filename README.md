@@ -788,6 +788,270 @@ INVALID_JSON: Failed to parse and repair LLM response. Original error: ..., Repa
 - `REVIEW_PASS_SCORE_MIN`: 厳しくすると品質向上、Hold記事増加
 - `REVIEW_PASS_SCORE_AVG`: 全体的な品質基準
 
+### Day-0 本番リハーサル（Railway）
+
+本番環境への初回デプロイ後、cron 自動運用を開始する前に、**全機能を手動で一度完走**してください。
+
+このリハーサルの目的は：
+- 各 worker の動作確認
+- 環境変数の調整（レビュー基準、パイプライン上限）
+- 初期データの品質確認
+- 運用手順の習熟
+
+#### (1) 事前準備チェックリスト
+
+**Kill Switch（必須）**:
+- [ ] `PIPELINE_ENABLED="true"` に設定
+- [ ] `FETCH_SOURCES_ENABLED="true"` に設定
+- [ ] `FETCH_DONATIONS_ENABLED="true"` に設定
+
+**パイプライン設定（初回は小さめ推奨）**:
+- [ ] `PIPELINE_MAX_ITEMS_PER_RUN="3"` に設定（初回は 3 件で様子見）
+- [ ] `PIPELINE_MAX_ITEMS_PER_SOURCE="2"` に設定
+- [ ] `PIPELINE_MAX_LLM_CALLS_PER_RUN="20"` に設定（コスト管理）
+- [ ] `PIPELINE_STALE_PROCESSING_MINUTES="120"` （デフォルト維持）
+- [ ] `PIPELINE_MAX_RETRY_PER_ITEM="2"` （デフォルト維持）
+
+**レビュー基準（初回はやや甘め推奨）**:
+- [ ] `REVIEW_PASS_SCORE_MIN="65"` に設定（初回は 65 点でテスト、後で 70 に上げる）
+- [ ] `REVIEW_PASS_SCORE_AVG="75"` に設定（初回は 75 点でテスト、後で 80 に上げる）
+- [ ] `REVIEW_MAX_AUTOFIX_ATTEMPTS="2"` （デフォルト維持）
+
+**データ投入（初回は少なめ推奨）**:
+- [ ] Sources は **3〜5件** に絞る（信頼性の高いもののみ: UNHCR, UNICEF, WFP など）
+- [ ] Campaigns は **1件のみ** active にする（priority=10 など高い値を設定）
+
+**推奨 Cron スケジュール（初回は daily-pipeline のみ有効化）**:
+- [ ] **日次記事生成**: `0 0 * * *` (UTC 0:00 = JST 9:00) - 有効化
+- [ ] **ソース取得**: `0 */12 * * *` (12時間ごと) - 初回は手動のみ、安定後に有効化
+- [ ] **KGI取得**: `0 */6 * * *` (6時間ごと) - 初回は手動のみ、安定後に有効化
+
+#### (2) 実行手順（手動完走）
+
+以下の手順を **順番通りに** 実行してください。
+
+**Step 1: データベース準備**
+
+```bash
+# Railway環境にログイン（初回のみ）
+railway login
+railway link
+
+# マイグレーション実行
+railway run --service web pnpm prisma migrate deploy
+
+# 初期データ投入
+railway run --service web pnpm db:seed
+```
+
+**確認**:
+- [ ] Seed 実行時に表示された初回パスワードを保存
+- [ ] `/admin/login` でログイン成功
+
+---
+
+**Step 2: KGI取得（寄付金額）の手動実行**
+
+```bash
+# KGI取得 worker を手動実行
+railway run --service web pnpm worker:fetch-donations
+```
+
+**確認**:
+- [ ] ログに `[fetch-donations] status=success total=1 success=1 failed=0 duration_ms=...` が表示される
+- [ ] Home (`/`) で KGI（累計寄付金額）が表示される
+- [ ] 最終更新日時が現在時刻に近い
+
+**トラブルシューティング**:
+- 失敗した場合: `/admin/campaigns` で Parse Config を確認・調整
+
+---
+
+**Step 3: 情報ソース取得の手動実行**
+
+```bash
+# 情報ソース取得 worker を手動実行
+railway run --service web pnpm worker:fetch-sources
+```
+
+**確認**:
+- [ ] ログに `[fetch-sources] status=success total=3 added=12 skipped=3 duration_ms=...` が表示される
+- [ ] `/admin/sources` で「Last Fetch」が更新されている
+- [ ] Prisma Studio または DB で `raw_items` テーブルを確認、status=NEW のアイテムが増加
+
+**期待値**:
+- 3〜5 sources から合計 10〜30 件の raw_items が追加される（初回）
+
+---
+
+**Step 4: Prompts/Templates の同期**
+
+```bash
+# ローカルから Railway DB に同期（推奨）
+railway run pnpm prompts:sync
+railway run pnpm templates:sync
+```
+
+**確認**:
+- [ ] `/admin/prompts` で 5 つのプロンプトタイプにそれぞれ Active 版が設定されている
+- [ ] `/admin/templates` で article_template_v1 が Active になっている
+
+---
+
+**Step 5: 日次パイプラインの手動実行（最重要）**
+
+```bash
+# 日次記事生成パイプラインを手動実行
+railway run --service web pnpm worker:daily-pipeline
+```
+
+**確認**:
+- [ ] ログに `[daily-pipeline] status=success processed=3 published=2 hold=1 failed=0 duration_ms=...` が表示される
+- [ ] Prisma Studio で `raw_items` の status 変化を確認:
+  - NEW → PROCESSING → PROCESSED (成功)
+  - NEW → PROCESSING → HOLD (レビュー不合格)
+  - NEW → PROCESSING → FAILED (エラー)
+- [ ] `articles` テーブルに新規記事が保存されている（status=PUBLISHED または HOLD）
+- [ ] `/admin/ops` で PipelineRun の統計が表示される
+
+**期待値**:
+- 処理数: 3 件（PIPELINE_MAX_ITEMS_PER_RUN=3 の場合）
+- 公開: 1〜2 件（レビュー基準次第）
+- 保留: 0〜1 件
+- 失敗: 0 件（理想）
+
+**トラブルシューティング**:
+- HOLD が多い場合: REVIEW_PASS_SCORE を下げる or プロンプト改善
+- FAILED が多い場合: errorReason を確認（INVALID_JSON, LLM timeout など）
+
+---
+
+**Step 6: 公開記事の確認**
+
+```bash
+# ブラウザで確認
+```
+
+**確認**:
+- [ ] `/news` で記事一覧が表示される（PUBLISHED のみ）
+- [ ] 記事タイトルをクリックして詳細ページを開く
+- [ ] **FACT/INFERENCE/UNVERIFIED ブロック**が色分けされて表示される
+- [ ] FACT ブロックに **evidence_urls のリンク**が表示される
+- [ ] **支援ボタン**が表示され、キャンペーン名が正しい
+
+---
+
+**Step 7: 支援ボタンとクリック追跡の確認**
+
+**確認**:
+- [ ] `/news/[slug]` の支援ボタンをクリック
+- [ ] `/go/{campaign_id}` にリダイレクトされる
+- [ ] 寄付ページ（UNHCR など）が開く
+- [ ] Prisma Studio で `click_events` テーブルを確認
+- [ ] クリックイベントが 1 件記録されている（campaignId, clickedAt, userAgent, referer）
+
+---
+
+**Step 8: Admin Ops ダッシュボードの確認**
+
+```bash
+# ブラウザで確認
+```
+
+**確認**:
+- [ ] `/admin/ops` で以下のセクションが表示される:
+  - **Stats Overview**: Raw Items (NEW, PROCESSING, PROCESSED, HOLD, FAILED の件数)
+  - **Article Stats**: PUBLISHED, HOLD, DRAFT の件数
+  - **Today's Pipeline Runs**: 実行履歴（Run ID, Status, Results）
+  - **Stale PROCESSING**: 0 件（正常時）
+  - **Failed Items**: 失敗したアイテム一覧（もしあれば）
+  - **Hold Articles**: 保留記事一覧（もしあれば）
+- [ ] **最低1つずつ** 画面上で内容を確認:
+  - Hold Article のレビュー結果（スコア、Hard Fail 理由、改善案）を読む
+  - Failed Item のエラー理由を読む
+
+---
+
+#### (3) リハーサル後の調整
+
+リハーサル実行後、以下の結果に応じて環境変数を調整してください。
+
+**HOLD が多い場合（合格率 < 50%）**:
+
+1. **レビュー基準を緩める**:
+   ```bash
+   REVIEW_PASS_SCORE_MIN="60"  # 70 → 60 に下げる
+   REVIEW_PASS_SCORE_AVG="70"  # 80 → 70 に下げる
+   ```
+2. **プロンプト改善**（中期的対応）:
+   - `prompts/writer.md` で中立表現を強調
+   - `prompts/reviewer.md` でスコアリング基準を調整
+   - 改善後、`railway run pnpm prompts:sync` で再同期
+
+**FAILED が多い場合（失敗率 > 20%）**:
+
+1. **エラー理由を確認** (`/admin/ops` の Failed Items):
+   - **INVALID_JSON**: Template の JSON 構造を簡素化、writer prompt で JSON 出力を強調
+   - **LLM timeout**: `LLM_TIMEOUT_MS` を増やす（30000 → 60000）
+   - **Evidence not found**: Sources の品質を見直し（RSS Feed が不完全な場合、scrape に変更）
+
+2. **Sources 品質の見直し**:
+   - 不安定な sources を `isActive=false` に設定
+   - 信頼性の高い sources のみ残す
+
+3. **Template JSON の簡素化**:
+   - `templates/article_template_v1.md` の構造をシンプルにする
+   - セクション数を減らす（5 → 3）
+
+**コスト管理（LLM API 使用量）**:
+
+1. **初回運用の推奨設定**:
+   - `PIPELINE_MAX_ITEMS_PER_RUN="5"`（日次 5 件程度）
+   - `PIPELINE_MAX_ITEMS_PER_SOURCE="2"`（1 ソースあたり 2 件）
+   - 1 記事あたり LLM 呼び出し: 2〜5 回（生成 + 分類 + レビュー + リライト×0〜2）
+   - **1 日あたり推定 LLM 呼び出し**: 5 件 × 平均 3 回 = **15 calls/day**
+
+2. **安定後の設定**:
+   - `PIPELINE_MAX_ITEMS_PER_RUN="10"`（標準）
+   - `PIPELINE_MAX_ITEMS_PER_SOURCE="5"`（標準）
+   - **1 日あたり推定 LLM 呼び出し**: 10 件 × 平均 3 回 = **30 calls/day**
+
+3. **コスト監視**:
+   - `/admin/ops` の Pipeline Runs で duration_ms を確認
+   - Railway ログで `[daily-pipeline] ... llm_calls=X` を確認（将来実装予定）
+   - OpenAI Dashboard で API 使用量を定期的に確認
+
+**Cron 自動化の段階的有効化**:
+
+1. **Phase 1: 日次記事生成のみ**（初回 1〜2 週間）:
+   - daily-pipeline の Cron のみ有効化
+   - sources/donations は手動実行（週 1〜2 回）
+   - 品質とコストを監視
+
+2. **Phase 2: 情報ソース取得を自動化**（安定後）:
+   - fetch-sources の Cron を有効化（12 時間ごと）
+   - raw_items の増加ペースを監視
+
+3. **Phase 3: KGI 取得を自動化**（安定後）:
+   - fetch-donations の Cron を有効化（6 時間ごと）
+   - Home の KGI が定期的に更新されることを確認
+
+---
+
+#### (4) Day-0 完了チェックリスト
+
+リハーサル完了後、以下を確認してください：
+
+- [ ] 各 worker が正常に動作した（fetch-donations, fetch-sources, daily-pipeline）
+- [ ] 記事が公開された（最低 1 件の PUBLISHED 記事）
+- [ ] 支援ボタンが動作し、クリック追跡が記録された
+- [ ] `/admin/ops` で運用状態を確認できた
+- [ ] 環境変数を調整した（レビュー基準、パイプライン上限）
+- [ ] `docs/ops/day0_report.md` に結果を記録した（テンプレート: `docs/ops/day0_report_template.md`）
+- [ ] 次のアクションを決定した（プロンプト改善 or sources 見直し or 上限調整）
+
+**Day-0 完了後**: daily-pipeline の Cron を有効化し、毎日自動実行されることを確認してください。
+
 ---
 
 ## 開発ワークフロー

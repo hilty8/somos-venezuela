@@ -95,6 +95,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Launch Readiness Gate: Summary logs for all workers (1-line monitoring format with status/metrics/duration_ms)
 - Launch Readiness Gate: Standardized PipelineRun.stats keys (total, published, hold, failed, duration_ms, llm_calls)
 - Launch Readiness Gate: Unit tests for JSON repair and failure handling
+- Day-0 Runbook: Comprehensive checklist-format rehearsal guide in README with pre-deployment preparation, 8-step execution workflow, and post-rehearsal adjustment guidance
+- Day-0 Report Template: docs/ops/day0_report_template.md with 10 sections for recording rehearsal results (environment variables, worker execution, article verification, ops dashboard, findings, and next actions)
 
 ### Changed
 - Admin initial password changed from固定 'admin123' to randomly generated 20-character password (shown once at seed time)
