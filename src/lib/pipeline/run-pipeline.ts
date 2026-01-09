@@ -105,6 +105,7 @@ export async function runPipeline(
           data: {
             status: "FAILED",
             errorReason: errorMessage,
+            processingStartedAt: null, // Clear PROCESSING lock
           },
         });
       }
@@ -146,6 +147,18 @@ async function processRawItem(
   stats: PipelineRunStats,
   logs: PipelineLog[]
 ): Promise<void> {
+  // Step 0: Lock raw item with PROCESSING status
+  addLog(logs, "info", "Locking raw item (PROCESSING)...", rawItem.id);
+  await db.rawItem.update({
+    where: { id: rawItem.id },
+    data: {
+      status: "PROCESSING",
+      processingStartedAt: new Date(),
+      lastAttemptAt: new Date(),
+      retryCount: rawItem.retryCount + 1,
+    },
+  });
+
   // Step 1: Generate article
   addLog(logs, "info", "Generating article...", rawItem.id);
   let article = await generateArticle({
@@ -293,10 +306,14 @@ async function processRawItem(
     });
   }
 
-  // Mark raw item as processed
+  // Mark raw item with final status
+  const rawItemStatus = status === "PUBLISHED" ? "PROCESSED" : "HOLD";
   await db.rawItem.update({
     where: { id: rawItem.id },
-    data: { status: "PROCESSED" },
+    data: {
+      status: rawItemStatus,
+      processingStartedAt: null, // Clear PROCESSING lock
+    },
   });
 
   // Update stats

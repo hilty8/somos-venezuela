@@ -6,6 +6,105 @@ Format: 1 PR = 1 entry (in chronological order)
 
 ---
 
+## [EPIC-G / G1] Automation & Operations - 2026-01-09
+
+### Added
+
+**Database Schema:**
+- Added `PROCESSING` and `HOLD` to `RawItemStatus` enum
+- Added `retryCount`, `lastAttemptAt`, `processingStartedAt` to `RawItem`
+- Added index on `processingStartedAt` for stale detection
+
+**State Transition Logic:**
+```
+NEW → PROCESSING → PROCESSED (success: article PUBLISHED)
+               → HOLD (review failed)
+               → FAILED (error)
+```
+
+**Worker (`workers/daily-pipeline.ts`):**
+- Railway cron entry point for automated daily execution
+- Respects environment-based limits (max items per run/source)
+- Auto-retry for FAILED items (within retry limit)
+- Collects items from all active sources
+- Resets FAILED to NEW for retry
+
+**Admin Ops Dashboard (`/admin/ops`):**
+- Real-time stats (raw items by status, articles by status)
+- Today's pipeline runs with results
+- Failed items list with error reasons and retry counts
+- Hold articles list with review feedback
+- Stale PROCESSING detection and recovery
+- Batch operations: Retry failed, Recover stale
+
+**Admin Ops API:**
+- `GET /api/admin/ops/stats`: Operational statistics
+- `GET /api/admin/ops/failed`: Failed items list
+- `GET /api/admin/ops/hold`: Hold articles list
+- `POST /api/admin/ops/retry-failed`: Retry selected failed items
+- `POST /api/admin/ops/recover-stale`: Recover stale PROCESSING items
+
+**Donation Link Integration:**
+- `GET /go/[id]`: Redirect to donation campaign with click tracking
+- `GET /api/public/campaigns`: List active campaigns
+- Support buttons added to article detail pages (planned)
+
+**Tests:**
+- `state-transitions.test.ts`: PROCESSING lock, retry limits, stale detection
+
+### Configuration
+
+**Environment Variables (暴走防止):**
+- `PIPELINE_MAX_ITEMS_PER_RUN="10"` - Max items per run
+- `PIPELINE_MAX_ITEMS_PER_SOURCE="5"` - Max items per source
+- `PIPELINE_MAX_LLM_CALLS_PER_RUN="50"` - Max LLM calls per run
+- `PIPELINE_STALE_PROCESSING_MINUTES="120"` - Stale threshold (minutes)
+- `PIPELINE_MAX_RETRY_PER_ITEM="2"` - Max retry attempts
+
+### Features
+
+**PROCESSING Lock:**
+- Prevents duplicate processing of same raw_item
+- Automatically set when pipeline starts processing
+- Cleared when processing completes (success/fail/hold)
+
+**Retry Logic:**
+- FAILED items can be retried up to MAX_RETRY times
+- Each retry increments retryCount
+- Items at retry limit cannot be retried automatically
+- Manual retry possible from Admin Ops dashboard
+
+**Stale PROCESSING Recovery:**
+- Items PROCESSING longer than threshold are "stale"
+- Admin can recover to NEW (retry) or FAILED (give up)
+- Prevents locked items from blocking pipeline forever
+
+**HOLD Management:**
+- Review-failed articles go to HOLD status
+- Associated raw_items also marked as HOLD
+- Admin can review reasons and manually retry with updated prompts
+- Prevents auto-publishing of low-quality content
+
+**Daily Automation:**
+- Railway cron executes `pnpm worker:daily-pipeline`
+- Processes NEW and retryable FAILED items
+- Respects per-run and per-source limits
+- Logs all results to PipelineRun table
+
+### Documentation
+
+**Specification Updates:**
+- Updated `docs/01_SPEC.md` with G0/G1 review criteria (0-100 scale)
+- Added state transition diagram
+- Added暴走防止 limits specification
+- Added stale recovery specification
+
+**Environment Configuration:**
+- Updated `.env.example` with all G1 variables
+- Documented recommended values and meanings
+
+---
+
 ## [EPIC-G / G0] Manual Article Generation Pipeline - 2026-01-09
 
 ### Added

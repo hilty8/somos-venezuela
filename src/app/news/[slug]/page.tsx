@@ -21,13 +21,21 @@ interface Article {
   blocks: ArticleBlock[];
 }
 
+interface Campaign {
+  id: string;
+  name: string;
+  category: string;
+}
+
 export default function NewsDetailPage() {
   const params = useParams();
   const [article, setArticle] = useState<Article | null>(null);
+  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     fetchArticle();
+    fetchCampaigns();
   }, [params.slug]);
 
   async function fetchArticle() {
@@ -41,6 +49,18 @@ export default function NewsDetailPage() {
       console.error("Error fetching article:", error);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function fetchCampaigns() {
+    try {
+      const response = await fetch("/api/public/campaigns");
+      if (response.ok) {
+        const data = await response.json();
+        setCampaigns(data.campaigns || []);
+      }
+    } catch (error) {
+      console.error("Error fetching campaigns:", error);
     }
   }
 

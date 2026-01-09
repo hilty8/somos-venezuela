@@ -149,9 +149,11 @@ model Source {
 }
 
 enum RawItemStatus {
-  NEW
-  PROCESSED
-  FAILED
+  NEW        // 未処理（パイプライン実行対象）
+  PROCESSING // 処理中（ロック）
+  PROCESSED  // 記事公開済み（成功）
+  HOLD       // 記事保留（レビュー不合格）
+  FAILED     // 生成エラー
 }
 
 model RawItem {
@@ -162,14 +164,20 @@ model RawItem {
   content     String?       @db.Text
   publishedAt DateTime?
   fetchedAt   DateTime      @default(now())
-  status      RawItemStatus @default(NEW)
-  errorReason String?       @db.Text
+
+  // Status tracking (G1)
+  status              RawItemStatus @default(NEW)
+  errorReason         String?       @db.Text
+  retryCount          Int           @default(0)     // リトライ回数
+  lastAttemptAt       DateTime?                     // 最後の試行日時
+  processingStartedAt DateTime?                     // PROCESSING開始日時（stale検出用）
 
   source Source @relation(fields: [sourceId], references: [id], onDelete: Cascade)
 
   @@index([sourceId])
   @@index([publishedAt])
   @@index([status])
+  @@index([processingStartedAt]) // stale PROCESSING検出用
   @@map("raw_items")
 }
 
