@@ -25,17 +25,18 @@ interface Campaign {
   id: string;
   name: string;
   category: string;
+  provider: string;
 }
 
 export default function NewsDetailPage() {
   const params = useParams();
   const [article, setArticle] = useState<Article | null>(null);
-  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [topCampaign, setTopCampaign] = useState<Campaign | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     fetchArticle();
-    fetchCampaigns();
+    fetchTopCampaign();
   }, [params.slug]);
 
   async function fetchArticle() {
@@ -52,15 +53,15 @@ export default function NewsDetailPage() {
     }
   }
 
-  async function fetchCampaigns() {
+  async function fetchTopCampaign() {
     try {
-      const response = await fetch("/api/public/campaigns");
+      const response = await fetch("/api/public/campaigns/top-priority");
       if (response.ok) {
         const data = await response.json();
-        setCampaigns(data.campaigns || []);
+        setTopCampaign(data.campaign);
       }
     } catch (error) {
-      console.error("Error fetching campaigns:", error);
+      console.error("Error fetching top priority campaign:", error);
     }
   }
 
@@ -174,6 +175,27 @@ export default function NewsDetailPage() {
             </div>
           ))}
         </div>
+
+        {/* Support Button */}
+        {topCampaign && (
+          <div className="bg-gradient-to-r from-blue-500 to-blue-600 rounded-lg shadow-lg p-8 mb-6 text-white text-center">
+            <h2 className="text-2xl font-bold mb-3">
+              ベネズエラの人々を支援する
+            </h2>
+            <p className="text-blue-100 mb-6">
+              あなたの寄付が、ベネズエラの復興を支える力になります
+            </p>
+            <a
+              href={`/go/${topCampaign.id}`}
+              className="inline-block px-8 py-4 bg-white text-blue-600 font-bold text-lg rounded-lg hover:bg-blue-50 transition-colors shadow-md"
+            >
+              {topCampaign.provider} に寄付する →
+            </a>
+            <p className="text-sm text-blue-100 mt-4">
+              {topCampaign.name}
+            </p>
+          </div>
+        )}
 
         {/* Legend */}
         <div className="bg-white rounded-lg shadow p-6 mb-6">

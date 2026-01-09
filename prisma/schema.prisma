@@ -83,6 +83,7 @@ model DonationCampaign {
 
   // Status
   isActive   Boolean  @default(true)
+  priority   Int      @default(0) // Higher number = higher priority (for support button)
   lastFetchAt DateTime?
   lastError  String?
   errorCount Int      @default(0)

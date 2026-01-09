@@ -407,6 +407,336 @@ Railway ダッシュボードで:
 - `DATABASE_URL` が正しく設定されているか確認
 - デプロイ後に `railway run pnpm prisma generate` を実行
 
+## Production Runbook（本番運用手順書）
+
+このセクションでは、Railway本番環境への初回デプロイから日次運用までの完全な手順を記載します。
+
+### 前提条件
+
+- Railway アカウントとプロジェクトが作成済み
+- GitHub リポジトリが Railway に接続済み
+- Railway CLI がインストール済み（`npm install -g @railway/cli`）
+
+### サービス構成（Railway）
+
+本番環境は以下の3つのサービスで構成されます：
+
+1. **Web Service** - Next.js アプリケーション（Public + Admin + API）
+   - ビルド: `pnpm install && pnpm prisma generate && pnpm build`
+   - 起動: `pnpm start`
+   - ポート: 3000
+   - 公開URL: Railway が自動生成
+
+2. **PostgreSQL Service** - データベース
+   - Railway の PostgreSQL プラグイン
+   - `DATABASE_URL` が Web Service に自動注入される
+
+3. **Cron Job Services** - バッチ処理（3つ）
+   - **KGI取得**: `0 */6 * * *` (UTC基準: 6時間ごと)
+   - **ソース取得**: `0 */12 * * *` (UTC基準: 12時間ごと)
+   - **記事生成**: `0 0 * * *` (UTC基準: 毎日0:00 = JST 9:00)
+
+**重要: UTC/JST時刻の扱い**
+- Railway Cron は **UTC基準** でスケジュール実行されます
+- JST (日本時間) = UTC + 9時間
+- 例: JST 9:00 に実行したい場合 → `0 0 * * *` (UTC 0:00)
+- 例: JST 18:00 に実行したい場合 → `0 9 * * *` (UTC 9:00)
+- アプリケーション内部では `new Date().toLocaleString("ja-JP")` で JST 表示
+
+### 初回デプロイ手順
+
+#### 1. PostgreSQL Service の追加
+
+Railway ダッシュボードで:
+1. "New Service" → "Database" → "PostgreSQL" を選択
+2. `DATABASE_URL` が自動生成される（Web Service から参照可能）
+
+#### 2. Web Service の環境変数設定
+
+Railway ダッシュボード → Web Service → Variables で以下を設定:
+
+**認証関連（必須）:**
+```bash
+NEXTAUTH_SECRET="<32文字以上のランダム文字列>"  # openssl rand -base64 32 で生成
+NEXTAUTH_URL="https://your-app.up.railway.app"    # デプロイ後のURL
+ADMIN_INITIAL_PASSWORD="<初回パスワード>"         # Seed用（必須）
+```
+
+**LLM関連（必須）:**
+```bash
+# プロバイダー選択（デフォルトは openai）
+LLM_PROVIDER="openai"  # "openai" | "anthropic" | "groq"
+
+# OpenAI（推奨）
+OPENAI_API_KEY="sk-..."
+LLM_MODEL_WRITER="gpt-4o-mini"
+LLM_MODEL_REVIEWER="gpt-4o-mini"
+LLM_MODEL_CLASSIFY="gpt-4o-mini"
+LLM_MODEL_REWRITE="gpt-4o-mini"
+LLM_MODEL_SUMMARIZE="gpt-4o-mini"
+```
+
+**パイプライン制御（G1: 暴走防止）:**
+```bash
+PIPELINE_MAX_ITEMS_PER_RUN="10"           # 1回の実行で処理する最大アイテム数
+PIPELINE_MAX_ITEMS_PER_SOURCE="5"         # 1ソースあたりの最大アイテム数
+PIPELINE_MAX_LLM_CALLS_PER_RUN="50"       # 1回の実行での最大LLM呼び出し数
+PIPELINE_STALE_PROCESSING_MINUTES="120"   # PROCESSINGをstaleとみなす時間（分）
+PIPELINE_MAX_RETRY_PER_ITEM="2"           # アイテムごとの最大リトライ回数
+```
+
+**レビュー基準（0-100スケール）:**
+```bash
+REVIEW_PASS_SCORE_MIN="70"      # カテゴリ別最低スコア（0-100）
+REVIEW_PASS_SCORE_AVG="80"      # 平均最低スコア（0-100）
+REVIEW_MAX_AUTOFIX_ATTEMPTS="2" # リライト最大回数
+```
+
+**Prompt as Code（セキュリティ）:**
+```bash
+ALLOW_SYNC_API="false"  # 本番では必ず false（Admin UIから同期不可）
+```
+
+#### 3. データベースマイグレーション
+
+Railway CLI を使用してマイグレーションを実行:
+
+```bash
+# Railway環境にログイン
+railway login
+
+# プロジェクトにリンク
+railway link
+
+# マイグレーション実行（本番用）
+railway run --service web pnpm prisma migrate deploy
+
+# 初期データ投入（管理者ユーザー作成）
+railway run --service web pnpm db:seed
+```
+
+**重要**: `pnpm db:seed` 実行時に **初回パスワードがコンソールに1回だけ表示されます**。このパスワードを必ず保存してください！
+
+```
+🔑 INITIAL PASSWORD (save this - shown only once):
+    xK8@mP2#qR5!vN9...
+    Please change this password after first login!
+```
+
+環境変数 `ADMIN_INITIAL_PASSWORD` を設定している場合は、そのパスワードが使用されます。
+
+#### 4. Cron Job Services の設定
+
+Railway ダッシュボードで各Cron Jobを作成:
+
+**Cron Job 1: KGI取得**
+- Schedule: `0 */6 * * *` (6時間ごと、UTC基準)
+- Command: `pnpm worker:fetch-donations`
+- 環境変数: Web Service と同じ設定をコピー（`DATABASE_URL` も必要）
+
+**Cron Job 2: ソース取得**
+- Schedule: `0 */12 * * *` (12時間ごと、UTC基準)
+- Command: `pnpm worker:fetch-sources`
+- 環境変数: Web Service と同じ設定をコピー
+
+**Cron Job 3: 日次記事生成（G1）**
+- Schedule: `0 0 * * *` (UTC 0:00 = JST 9:00)
+- Command: `pnpm worker:daily-pipeline`
+- 環境変数: Web Service と同じ設定をコピー（LLM APIキーも必須）
+
+**注意**: Cron Job Services は Web Service と同じビルド済みイメージを使用するため、依存関係のインストールは不要です。
+
+### 本番環境の検証手順（必須）
+
+以下の手順を **順番通りに** 実行して、本番環境が正しく動作することを確認してください。
+
+#### Step 1: 情報ソースの登録
+
+1. `https://your-app.up.railway.app/admin/login` にアクセス
+2. Email: `admin@somos-venezuela.org`
+3. Password: seed時に保存したパスワード
+4. `/admin/sources` で「新規ソース」をクリック
+5. 以下を入力:
+   - 名前: 例 "UNHCR Venezuela News"
+   - URL: RSS FeedのURL（例: `https://www.unhcr.org/news/rss`）
+   - カテゴリ: "humanitarian"
+   - 取得方式: "rss"
+   - 有効: チェック
+6. 「保存」をクリック
+
+#### Step 2: ソース取得の手動実行
+
+Railway CLI で手動実行してデータが取得できることを確認:
+
+```bash
+railway run --service web pnpm worker:fetch-sources
+```
+
+**確認ポイント**:
+- 実行ログに "Fetched X items from [ソース名]" が表示される
+- `/admin/sources` で「Last Fetch」が更新されている
+- Prisma Studio または Admin UI で `raw_items` テーブルにデータが保存されている（status=NEW）
+
+#### Step 3: Prompts/Templates の同期
+
+**推奨方法: ローカル環境から同期**
+
+```bash
+# ローカルで実行（Railway の DATABASE_URL を使用）
+railway run pnpm prompts:sync
+railway run pnpm templates:sync
+```
+
+**または Railway CLI で実行**:
+```bash
+railway run --service web pnpm prompts:sync
+railway run --service web pnpm templates:sync
+```
+
+**確認ポイント**:
+- `/admin/prompts` でバージョン一覧が表示される
+- 各プロンプトタイプ（DRAFT, REVIEW, REWRITE, CLASSIFY, SUMMARIZE）にActive版が設定されている
+- `/admin/templates` でテンプレートバージョンが表示され、Active版が設定されている
+
+**重要**: 本番環境では `ALLOW_SYNC_API=false` のため、Admin UI の「同期」ボタンは無効化されています。同期は必ずローカルまたはCIから実行してください。
+
+#### Step 4: 日次パイプラインの手動実行
+
+Railway CLI で手動実行して記事生成が成功することを確認:
+
+```bash
+railway run --service web pnpm worker:daily-pipeline
+```
+
+**確認ポイント**:
+- 実行ログに "Pipeline completed" が表示される
+- `raw_items` の status が NEW → PROCESSING → PROCESSED/HOLD/FAILED に遷移
+- 成功した場合、`articles` テーブルに新規記事が保存される（status=PUBLISHED または HOLD）
+- `/admin/ops` で PipelineRun の統計が表示される（published/hold/failed 件数）
+
+#### Step 5: 公開サイトで記事を確認
+
+1. `https://your-app.up.railway.app/news` にアクセス
+2. 記事一覧が表示されることを確認
+3. 記事タイトルをクリックして詳細ページを確認
+4. **FACT/INFERENCE/UNVERIFIED ブロックが正しく表示**されることを確認
+5. FACT ブロックに **evidence_urls のリンク**が表示されることを確認
+
+**確認ポイント**:
+- 記事が公開されている（status=PUBLISHED）
+- 記事詳細ページが正しく表示される
+- メタデータ（カテゴリ、公開日時）が正しい
+
+#### Step 6: Admin Ops ダッシュボードで運用状態を確認
+
+1. `/admin/ops` にアクセス
+2. 以下が正しく表示されることを確認:
+   - **Raw Items stats**: NEW, PROCESSING, PROCESSED, HOLD, FAILED の件数
+   - **Article stats**: PUBLISHED, HOLD, DRAFT の件数
+   - **Today's Pipeline Runs**: 実行履歴（Run ID, Status, Results）
+   - **Stale PROCESSING**: 0件（正常時）
+   - **Failed Items**: 失敗したアイテム一覧（エラー理由、リトライ回数）
+   - **Hold Articles**: 保留記事一覧（レビュー結果、Hard Fail理由）
+
+**確認ポイント**:
+- Stale PROCESSING が 0 件（または正常範囲内）
+- Failed Items のエラー理由が明確
+- Hold Articles のレビュー結果が詳細に表示される
+
+#### Step 7: /go リダイレクトとクリック追跡の確認
+
+1. `/admin/campaigns` で寄付キャンペーンを登録:
+   - 名前: "Test Campaign"
+   - カテゴリ: "general"
+   - 提供元: "Test"
+   - 寄付URL: 実際の寄付ページURL（例: UNHCR）
+   - 有効: チェック
+2. キャンペーンIDをコピー（例: `cm123abc`）
+3. ブラウザで `/go/cm123abc` にアクセス
+4. 寄付ページにリダイレクトされることを確認
+5. Prisma Studio または Admin UI で `click_events` テーブルを確認
+6. クリックイベントが保存されていることを確認（campaignId, clickedAt, userAgent, referer）
+
+**確認ポイント**:
+- `/go/{id}` が正しくリダイレクトする（302 status）
+- `click_events` テーブルにイベントが記録される
+- KGI測定のための基本データが収集できている
+
+### 日次運用フロー（G1）
+
+#### 自動実行（Cron）
+
+以下が自動的に実行されます：
+
+1. **毎日 UTC 0:00 (JST 9:00)**: 日次記事生成パイプライン
+   - raw_items（status=NEW）を最大10件処理
+   - 失敗アイテム（FAILED）を自動リトライ（retry_count < 2）
+   - 記事を生成 → レビュー → 公開/保留
+
+2. **6時間ごと**: KGI取得（寄付金額スナップショット）
+
+3. **12時間ごと**: 情報ソース取得（RSS/Scrape）
+
+#### 管理者の日次タスク
+
+1. **Morning Check（毎朝）**:
+   - `/admin/ops` で昨日のパイプライン実行結果を確認
+   - Stale PROCESSING があれば回収（NEW または FAILED に戻す）
+   - Failed Items を確認し、必要に応じて再試行
+
+2. **Hold Articles Review（週1回程度）**:
+   - `/admin/ops` の Hold Articles セクションを確認
+   - レビュー不合格の理由を確認
+   - 必要に応じて手動で修正して公開
+
+3. **Error Monitoring**:
+   - Railway ダッシュボードで Cron Job のログを確認
+   - エラーがあれば原因を調査（LLM API制限、DB接続エラー等）
+
+#### トラブルシューティング
+
+**Stale PROCESSING が発生した場合**:
+1. `/admin/ops` で件数を確認
+2. 原因を調査（Railway ログでエラーを確認）
+3. "NEW に戻す" または "FAILED にする" で回収
+4. 必要に応じてパイプラインを手動実行
+
+**Failed Items が増えている場合**:
+1. エラー理由を確認（LLM API エラー、ネットワークエラー等）
+2. 環境変数を確認（LLM APIキー、接続設定等）
+3. リトライ上限（MAX_RETRY_PER_ITEM=2）に達していないか確認
+4. 問題解決後、バッチで再試行
+
+**Hold Articles が増えている場合**:
+1. レビュー結果を確認（Hard Fail 理由、スコア）
+2. Prompt を改善して再デプロイ
+3. 手動で記事を修正して公開
+
+### セキュリティチェックリスト
+
+- [ ] `NEXTAUTH_SECRET` が32文字以上のランダム文字列
+- [ ] `ADMIN_INITIAL_PASSWORD` が強力なパスワード（本番環境）
+- [ ] `ALLOW_SYNC_API=false` に設定（本番環境）
+- [ ] LLM APIキーが安全に管理されている（Railway Variables）
+- [ ] PostgreSQL の `DATABASE_URL` が外部に漏れていない
+- [ ] Audit Logs が有効化されている（管理者操作の記録）
+
+### パフォーマンスチューニング
+
+**パイプライン制御の調整**:
+- `PIPELINE_MAX_ITEMS_PER_RUN`: 1回の実行で処理するアイテム数（デフォルト: 10）
+  - 増やすと処理速度向上、LLMコスト増加
+  - 減らすとコスト削減、処理速度低下
+- `PIPELINE_MAX_LLM_CALLS_PER_RUN`: LLM呼び出し上限（デフォルト: 50）
+  - 暴走防止の最終防御線
+  - 1記事あたり最大5回のLLM呼び出し（生成+分類+レビュー+リライト×2）
+
+**レビュー基準の調整**:
+- `REVIEW_PASS_SCORE_MIN`: 厳しくすると品質向上、Hold記事増加
+- `REVIEW_PASS_SCORE_AVG`: 全体的な品質基準
+
+---
+
 ## 開発ワークフロー
 
 ### ブランチ戦略

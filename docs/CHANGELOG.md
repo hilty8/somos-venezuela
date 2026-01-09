@@ -71,14 +71,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - EPIC-F: Admin UI for templates management with JSON content preview and version control
 - EPIC-F: prompts/ directory with 5 initial prompts (writer, reviewer, rewrite, classify, summarize) in Markdown+YAML frontmatter
 - EPIC-F: templates/ directory with article_template_v1.md (Daily記事テンプレート定義)
+- EPIC-G / G0: Manual article generation pipeline with generate → classify → review → rewrite (up to 2 attempts) → publish/hold workflow
+- EPIC-G / G0: LLM abstraction layer supporting OpenAI, Anthropic, and Groq with provider switching via environment variables
+- EPIC-G / G0: Article review system with 0-100 scoring across 5 categories (Evidence, Neutrality, Overclaim, Dignity, Scope)
+- EPIC-G / G0: Hard Fail rules for immediate rejection (political evaluation, condemnation, incitement expressions)
+- EPIC-G / G0: Article blocks system with FACT/INFERENCE/UNVERIFIED types and evidence URL tracking for transparency
+- EPIC-G / G0: Admin pipeline execution UI (/admin/pipeline) with manual run and result display
+- EPIC-G / G0: Public news list and detail pages with color-coded blocks and evidence source links
+- EPIC-G / G1: raw_items state machine (NEW → PROCESSING → PROCESSED/HOLD/FAILED) with PROCESSING lock to prevent concurrent processing
+- EPIC-G / G1: Automatic retry logic for FAILED items with configurable retry limits (MAX_RETRY_PER_ITEM=2)
+- EPIC-G / G1: Stale PROCESSING detection and recovery system (PIPELINE_STALE_PROCESSING_MINUTES=120)
+- EPIC-G / G1: Pipeline runaway prevention with environment-based limits (MAX_ITEMS_PER_RUN, MAX_LLM_CALLS_PER_RUN)
+- EPIC-G / G1: Daily pipeline worker (workers/daily-pipeline.ts) for Railway cron automation
+- EPIC-G / G1: Admin Ops dashboard (/admin/ops) with stats, failed items management, hold articles review, and stale recovery
+- EPIC-G / G1: Ops API endpoints (/api/admin/ops/*) for stats, failed/hold lists, retry, and stale recovery
+- Production Runbook: Comprehensive deployment guide in README with Railway services structure, environment variables, migration procedures, and 7-step verification workflow
+- Production Runbook: UTC/JST timezone handling documentation for Railway Cron (UTC-based schedules with conversion examples)
+- Support button: Priority-based campaign selection with highest priority active campaign displayed on article detail pages
+- Support button: /go/{campaign_id} redirect with click tracking for KGI measurement (already implemented in G1)
 
 ### Changed
 - Admin initial password changed from固定 'admin123' to randomly generated 20-character password (shown once at seed time)
 - KGI calculation now includes last update timestamp and supports multiple campaigns
 - README expanded with detailed Railway deployment guide, cron configuration, and production verification steps
 - Prisma schema updated with SourceType enum (FILE/ADMIN) and Prompt as Code support fields (filePath, contentHash, version, description)
+- Prisma schema: DonationCampaign model now includes priority field (default: 0) for support button campaign selection
+- Prisma schema: RawItem model now includes status, retryCount, lastAttemptAt, processingStartedAt for G1 state machine
 - package.json: Added postinstall script for automatic `prisma generate` to optimize Railway deployment
 - Railway cron commands simplified to `pnpm worker:xxx` (removing redundant `pnpm install && prisma generate`)
+- Article detail pages now display support button with highest priority active campaign
 
 ### Fixed
 
